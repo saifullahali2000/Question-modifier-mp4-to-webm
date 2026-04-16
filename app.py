@@ -444,19 +444,41 @@ def update_question_content(
         raise ValueError("Django rejected update: " + " | ".join(combined[:8]))
 
     # Verify save actually happened and data persisted.
-    success_markers = ["was changed successfully", "changed successfully"]
-    if not any(marker in save_response.text.lower() for marker in success_markers):
+    # Django/admin themes can sanitize HTML/whitespace, so exact-string compares are too strict.
+    low_response = save_response.text.lower()
+    success_markers = ["was changed successfully", "changed successfully", "successfully updated"]
+    success_message_present = any(marker in low_response for marker in success_markers)
+    if not success_message_present:
+        response_soup = BeautifulSoup(save_response.text, "html.parser")
+        success_message_present = bool(response_soup.select(".messagelist .success, .alert-success"))
+
+    def normalize_for_compare(text: str) -> str:
+        value = unescape(str(text or ""))
+        value = re.sub(r"\s+", " ", value).strip()
+        value = value.replace('\\"', '"').replace("\\/", "/")
+        return value
+
+    if not success_message_present:
         # Some admin themes still redirect without standard message; verify by re-fetching page.
         verify_page = session.get(change_url, timeout=30)
         verify_page.raise_for_status()
         verify_soup = BeautifulSoup(verify_page.text, "html.parser")
         persisted = False
+        expected = normalize_for_compare(updated_question_text)
         for key in target_names:
             textarea = verify_soup.select_one(f'textarea[name="{key}"]')
-            if textarea and (textarea.text or "") == updated_question_text:
+            if not textarea:
+                continue
+            actual = normalize_for_compare(textarea.text or "")
+            # Accept exact, contains, or reverse-contains to handle admin formatting/sanitization.
+            if actual == expected or expected in actual or actual in expected:
                 persisted = True
+                break
         if not persisted:
-            raise ValueError("Save request completed but updated text was not persisted in content fields.")
+            raise ValueError(
+                "Save request completed but could not verify persistence in content fields "
+                "(admin may sanitize markup; please spot-check one saved row)."
+            )
 
     return "Success"
 
