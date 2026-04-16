@@ -1,0 +1,8 @@
+streamlit
+pandas
+boto3
+requests
+imageio-ffmpeg
+beautifulsoup4
+selenium
+webdriver-manager
